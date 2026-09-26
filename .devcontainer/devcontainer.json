@@ -1,0 +1,29 @@
+{
+  "name": "Hardware Dev (Cocotb & Verilator)",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11-bookworm",
+  "forwardPorts": [6080],
+  "portsAttributes": {
+    "6080": {
+      "label": "noVNC Desktop",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/desktop-lite:1": {
+      "password": "vncpassword"
+    }
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y verilator gtkwave build-essential && pip install --upgrade pip && pip install cocotb cocotb-test pytest numpy pillow matplotlib pygame",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "mshr-h.VerilogHDL",
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ],
+      "settings": {
+        "verilog.linting.linter": "verilator"
+      }
+    }
+  }
+}
