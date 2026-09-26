@@ -12,11 +12,11 @@
 // Pipeline Latency: 3 Cycles (AREG/BREG -> MREG -> PREG)
 // ============================================================================
 
-//FPGA의 DSP로 합성되야 하는 모듈임.
+//FPGA의 DSP로 합성되야 하는 모듈임. 이거 3개 있으면 3 x 3 행렬곱셈기가 완성됨. 
 
 module dsp48_mac ( //범용 25 * 18 비트 DSP 모듈. a_in, b_in, c_in은 무조건 signed 값으로 줘야 하고 내부에 레지스터가 3개여서 클럭에지 3번 후에 p_out이 나옴. 
     input  wire               clk,
-    input  wire               rst_n,      // Active Low 동기/비동기 리셋
+    input  wire               reset,      // Active High 동기식 리셋
 
     // 제어 신호 (파이프라인 지연을 고려해 인입)
     input  wire               clr_accum,  // Clear Accumulator(누산기 초기화).
@@ -26,6 +26,7 @@ module dsp48_mac ( //범용 25 * 18 비트 DSP 모듈. a_in, b_in, c_in은 무�
     input  wire               load_c,     
     // 1: 누산 초기화 시 C 입력값을 베이스로 로드 (A*B + C)
     // 0: 누산 초기화 시 0에서 시작 (A*B + 0), 즉 clr_accum이 0이면 load_c가 1이던 0이건 그냥 무시됨.. 
+    input wire valid_in, //입력에서 이 신호를 1로 주면 3클럭 지연되서 결과물이 나올때 같이 valid_out이 나옴. 예를들어 2차원 내적 계산할때 마지막 성분을 넣을때 같이 vaild_in을 넣으면 나중에 (a1 * b1) + (a2 * b2)이랑 같이 valid_out이 나옴. 
 
     // 데이터 입력
     (* use_dsp = "yes" *)
@@ -48,8 +49,8 @@ module dsp48_mac ( //범용 25 * 18 비트 DSP 모듈. a_in, b_in, c_in은 무�
     reg               load_c_d1;
     reg               valid_d1;
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge clk) begin
+        if (reset) begin
             a_reg        <= 25'sd0;
             b_reg        <= 18'sd0;
             c_reg        <= 48'sd0;
@@ -62,7 +63,7 @@ module dsp48_mac ( //범용 25 * 18 비트 DSP 모듈. a_in, b_in, c_in은 무�
             c_reg        <= c_in;
             clr_accum_d1 <= clr_accum;
             load_c_d1    <= load_c;
-            valid_d1     <= 1'b1;
+            valid_d1     <= valid_in;
         end
     end
 
@@ -76,8 +77,8 @@ module dsp48_mac ( //범용 25 * 18 비트 DSP 모듈. a_in, b_in, c_in은 무�
     reg               load_c_d2;
     reg               valid_d2;
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge clk) begin
+        if (reset) begin
             m_reg        <= 43'sd0;
             c_reg_d2     <= 48'sd0;
             clr_accum_d2 <= 1'b0;
@@ -98,8 +99,8 @@ module dsp48_mac ( //범용 25 * 18 비트 DSP 모듈. a_in, b_in, c_in은 무�
     reg signed [47:0] p_reg;
     reg               valid_d3;
 
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+    always @(posedge clk) begin
+        if (reset) begin
             p_reg    <= 48'sd0;
             valid_d3 <= 1'b0;
         end else begin
