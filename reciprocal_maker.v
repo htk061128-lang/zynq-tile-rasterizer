@@ -1,0 +1,157 @@
+module reciprocal_maker #( //입력 데이터의 역수를 BRAM으로 구성된 룩업테이블을 읽고 변형해서 출력하는 모듈. 반드시 unsigned 값으로 들어와야 함!
+    // 1. 입력 포맷 파라미터 (Unsigned)
+    parameter INPUT_WIDTH       = 32, // 입력 데이터 비트 수
+    parameter IN_INTEGER_BITS   = 16, // 입력 정수부 비트 수
+    parameter IN_FRAC_BITS      = 16, // 입력 소수부 비트 수 (IN_INTEGER_BITS + IN_FRAC_BITS == INPUT_WIDTH)
+
+    // 2. 출력 포맷 파라미터 (Unsigned)
+    parameter OUTPUT_WIDTH      = 18, // 출력 역수 비트 수
+    parameter OUT_INTEGER_BITS  = 0,  // 출력 정수부 비트 수 (보통 0~1)
+    parameter OUT_FRAC_BITS     = 18, // 출력 소수부 비트 수 (OUT_INTEGER_BITS + OUT_FRAC_BITS == OUTPUT_WIDTH)
+
+    // 3. 연산 파라미터
+    parameter NEWTON_RAPHSON_PORT_A = 1,   // PORT A의 NR 반복 횟수: 0 (11bit 정밀도), 1 (22bit 정밀도), 2 (44bit 정밀도)
+    parameter NEWTON_RAPHSON_PORT_B = 1,
+
+    localparam SHIFT_W = $clog2(INPUT_WIDTH) + 2 //쉬프트할 비트수를 저장하기 위해 필요함. 부호등을 위해 넉넉하게 2 추가함.
+)( //합성시 내부의 BRAM을 해당하는 18비트 역수가 들어있게 초기화 해두어야 함!
+    // $clog2()는 주어진 숫자를 표현하거나 메모리를 주소 지정하는 데 필요한 최소 비트 수(올림된 log2_() 값)를 계산하는
+    // 베릴로그(Verilog) 시스템 함수임.
+    input clk,
+    input reset, //동기식 active high reset
+
+    // Port A 입력 스트림
+    input  wire                     in_valid_a,
+    input  wire [INPUT_WIDTH-1:0]   in_data_a,
+
+    // Port A 출력 스트림
+    output reg                      out_valid_a,
+    output reg  [OUTPUT_WIDTH-1:0]  out_data_a,
+    output reg                      div_by_zero_a, // in_data가 0일 때의 예외 플래그
+
+    // Port B 입력 스트림
+    input  wire                     in_valid_b,
+    input  wire [INPUT_WIDTH-1:0]   in_data_b,
+
+    // Port B 출력 스트림
+    output reg                      out_valid_b,
+    output reg  [OUTPUT_WIDTH-1:0]  out_data_b,
+    output reg                      div_by_zero_b // in_data가 0일 때의 예외 플래그
+);
+//정밀도라는 개념은 예를 들어 정밀도가 11비트이면 결과값의 상위 11비트는 참값과 일치하고 오차는 2^-11 이하라는 의미라고 함. 
+//Newton-Raphson을 1번 적용할때마다 DSP가 4개 사용됨. 포트당 2개씩 사용. 파이프라인 구조를 생각하고 만들어서 매 클럭 값을 넣어도 됨. 
+// =========================================================================
+// 18-bit x 2048 Reciprocal Look-Up Table (Total: 36,864 bits = 1x BRAM36K)
+// =========================================================================
+wire [10:0] bram_ad_a = sam_ad_a_ff[10:0]; // 11비트 주소 입력
+wire [17:0] bram_r_data_a; // 18비트 역수 데이터 출력 (2 클럭 지연)
+wire bram_en_a = ~is_zero_a_ff; // 파이프라인 유효 신호 연동
+
+wire [10:0] bram_ad_b; // 11비트 주소 입력
+wire [17:0] bram_r_data_b; // 18비트 역수 데이터 출력 (2 클럭 지연)
+wire bram_en_b; // 파이프라인 유효 신호 연동
+
+    generic_bram #(
+        .DATA_DEPTH  (2048),                    // 18 * 2028 BRAM 사용.
+        .DATA_WIDTH  (18),                      // 18비트 데이터 폭
+        .BYTE_WIDTH  (9),                       // 9비트 단위 바이트 인에이블 (총 2비트 we)
+        .RAM_MODE    ("TRUE_DUAL"),             // TRUE DUAL 포트 사용. 
+        .WRITE_MODE  ("NO_CHANGE"),             // 저전력 / 고속 권장 모드
+        .REG_OUT_A   (1), // 출력 레지스터 활성화 (Latency: 2 클럭)
+        .REG_OUT_B   (1), // 출력 레지스터 활성화 (Latency: 2 클럭)
+        .INIT_FILE   ("reciprocal_bram_18x2048.hex") // 2048 엔트리 초기화 파일
+    ) u_reciprocal_lut (
+        // Port A 
+        .clk_a       (clk),
+        .en_a        (bram_en_a), // 읽기 활성화 (상시 1'b1 또는 파이프라인 enable)
+        .regce_a     (1'b1), // 출력 파이프라인 레지스터 클럭 인에이블
+        .rst_a       (reset), // 동기식 하이 리셋
+        .we_a        (2'b00), // 쓰기 사용하지 않음.
+        .addr_a      (bram_ad_a), // [10:0] 정규화된 11비트 주소
+        .din_a       (18'b0), // 쓰기 사용 X
+        .dout_a      (bram_r_data_a), // [17:0] 초기 역수 추정값 출력
+
+        // Port B 
+        .clk_b       (clk),
+        .en_b        (bram_en_b),
+        .regce_b     (1'b1),
+        .rst_b       (reset),
+        .we_b        (2'b00), //쓰기는 사용하지 않음.
+        .addr_b      (bram_ad_b),
+        .din_b       (18'b0), // 쓰기 사용 X
+        .dout_b      (bram_r_data_b)                         
+    );
+
+//PORT A 신호들 ---------------------------
+//stage 1
+reg [INPUT_WIDTH-1:0] in_data_a_ff; // in_data_a를 처음에 저장하는 레지스터. 뉴텁 랜손할때 필요해서 계속 보내줘야 함.
+reg in_valid_a_ff; //in_valid_a를 처음에 저장하는 레지스터. 끝까지 보내줘야 함. 
+
+//stage 2
+reg [10:0] sam_ad_a_ff; //유효한 11비트를 샘플링해서 저장하는 레지스터.
+reg signed [SHIFT_W-1:0] rshift_a_ff; //나중에 오른쪽으로 쉬프트 해야하는 비트 개수를 저장함. 음수면 왼쪽임!!!
+reg is_zero_a_ff; //in_data_a_ff가 0이면 1을 저장함. 바로 인버터를 지나서 bram_en_a로 연결됨. 
+
+//stage3, 4는 BRAM 지연임.
+
+//stage 5
+reg [17:0] rdata_a_ff; //BRAM에서 읽어온 18비트 역수값을 저장하는 레지스터.
+
+//stage 6부터는 generate 문 안에서 진행됨!
+
+
+integer i;
+generate
+    if(NEWTON_RAPHSON_PORT_A == 0) begin : nr_0 //port a가 newton-raphson을 사용하지 않을때. DSP 0개 사용
+        //stage 6
+        reg [OUTPUT_WIDTH-1:0] out_data_a_ff; //쉬프트 완료한 값을 저장하는 레지스터. 출력으로 연결됨. 
+        reg out_valid_a_ff;
+
+        //조합회로 신호들
+        
+
+        always @(*) begin
+
+        end
+
+        always @(posedge clk) begin
+            if(reset) begin
+                in_data_a_ff <= 0;
+                in_valid_a_ff <= 0;
+
+                sam_ad_a_ff <= 0;
+                rshift_a_ff <= 0;
+                is_zero_a_ff <= 0;
+
+                rdata_a_ff <= 0;
+
+                out_data_a_ff <= 0;
+                out_valid_a_ff <= 0;
+            end
+            else begin
+                //stage 1
+                in_data_a_ff <= in_data_a;
+                in_valid_a_ff <= in_valid_a;
+
+                //stage 2
+
+            end
+        end
+
+    end
+    else if(NEWTON_RAPHSON_PORT_A == 1) begin : nr_1 //port a가 newton-raphson을 1번 사용할때. DSP 2개 사용
+    end
+    else if(NEWTON_RAPHSON_PORT_A == 2) begin : nr_2 //port a가 newton-raphson을 2번 사용할때. DSP 4개 사용
+    end
+endgenerate
+
+generate
+    if(NEWTON_RAPHSON_PORT_B == 0) begin : nr_0 //port b가 newton-raphson을 사용하지 않을때. DSP 0개 사용
+    end
+    else if(NEWTON_RAPHSON_PORT_B == 1) begin : nr_1 //port b가 newton-raphson을 1번 사용할때. DSP 2개 사용
+    end
+    else if(NEWTON_RAPHSON_PORT_B == 2) begin : nr_2 //port b가 newton-raphson을 2번 사용할때. DSP 4개 사용
+    end
+endgenerate
+
+endmodule

@@ -1,7 +1,7 @@
 module generic_bram #(
-    parameter integer TOTAL_BITS  = 32768,      // 4KB = 32768 bits
-    parameter integer DATA_WIDTH  = 18,         // 8, 16, 18, 32, 36, 64, 72 등
-    parameter integer BYTE_WIDTH  = 9,          // 바이트 분할 단위: 8, 9, 또는 DATA_WIDTH
+    parameter integer DATA_DEPTH  = 1024,       // 
+    parameter integer DATA_WIDTH  = 32,         // 8, 16, 18, 32, 36, 64, 72 등
+    parameter integer BYTE_WIDTH  = 8,          // 바이트 분할 단위: 8, 9, 또는 DATA_WIDTH
     parameter         RAM_MODE    = "TRUE_DUAL",// "TRUE_DUAL" or "SIMPLE_DUAL"
     parameter         WRITE_MODE  = "NO_CHANGE",// "NO_CHANGE" (권장/저전력) or "READ_FIRST"
     parameter integer REG_OUT_A   = 0,          // Port A 출력 레지스터 (0: 1-cycle, 1: 2-cycle latency)
@@ -10,17 +10,16 @@ module generic_bram #(
 
     // 파생 파라미터 자동 계산
     localparam integer WE_WIDTH   = (DATA_WIDTH + BYTE_WIDTH - 1) / BYTE_WIDTH,
-    localparam integer DEPTH      = TOTAL_BITS / DATA_WIDTH,
-    localparam integer ADDR_BITS  = $clog2(DEPTH)
+    localparam integer ADDR_BITS  = $clog2(DATA_DEPTH)
 )(
     // ==========================================
     // Port A (RAM_MODE="SIMPLE_DUAL"일 때 Write Only)
     // ==========================================
     input  wire                  clk_a,
-    input  wire                  en_a,
-    input  wire                  regce_a,
-    input  wire                  rst_a,
-    input  wire [WE_WIDTH-1:0]   we_a,
+    input  wire                  en_a, //메모리 전체 동작 활성화. 읽기, 쓰기 할때 모두 1을 줘야 함.
+    input  wire                  regce_a, //출력 레지스터 clk enable. 0이면 레지스터에 클럭이 인가되지 않아서 기존값을 계속 유지함. 
+    input  wire                  rst_a, //출력 레지스터 동기식 리셋 신호.
+    input  wire [WE_WIDTH-1:0]   we_a, 
     input  wire [ADDR_BITS-1:0]  addr_a,
     input  wire [DATA_WIDTH-1:0] din_a,
     output wire [DATA_WIDTH-1:0] dout_a,
@@ -39,7 +38,7 @@ module generic_bram #(
 );
 
     // BRAM 배열
-    (* ram_style = "block" *) reg [DATA_WIDTH-1:0] mem [0:DEPTH-1];
+    (* ram_style = "block" *) reg [DATA_WIDTH-1:0] mem [0:DATA_DEPTH-1];
 
     // 내부 읽기 데이터 레지스터 (BRAM Primitive Latch)
     reg [DATA_WIDTH-1:0] ram_data_a;
@@ -57,7 +56,7 @@ module generic_bram #(
         if (INIT_FILE != "") begin
             $readmemh(INIT_FILE, mem);
         end else begin
-            for (init_idx = 0; init_idx < DEPTH; init_idx = init_idx + 1) begin
+            for (init_idx = 0; init_idx < DATA_DEPTH; init_idx = init_idx + 1) begin
                 mem[init_idx] = {DATA_WIDTH{1'b0}};
             end
         end
