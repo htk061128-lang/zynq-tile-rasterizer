@@ -97,33 +97,54 @@ wire [SHIFT_W-1:0] pri_en_out_a_comb;
 //stage 1
 reg [INPUT_WIDTH-1:0] in_data_a_ff; // in_data_a를 처음에 저장하는 레지스터. 뉴텁 랜손할때 필요해서 계속 보내줘야 함.
 reg [SHIFT_W-1:0] pri_encoder_index_a_ff; //입력신호에 우선순위 인코더 돌려서 온 출력을 저장함. 
-reg in_valid_a_ff; //in_valid_a를 처음에 저장하는 레지스터. 끝까지 보내줘야 함. 
+reg in_valid_a_ff; //in_valid_a를 처음에 저장하는 레지스터. 끝까지 보내줘야 함.
 
 //stage 2
 reg [10:0] sam_ad_a_ff; //유효한 11비트를 샘플링해서 저장하는 레지스터.
-reg signed [SHIFT_W-1:0] rshift_a_ff; //나중에 오른쪽으로 쉬프트 해야하는 비트 개수를 저장함. 음수면 왼쪽임!!!
+reg signed [SHIFT_W:0] rshift_a_ff; //나중에 오른쪽으로 쉬프트 해야하는 비트 개수를 저장함. 음수면 왼쪽임!!! 그리고 부호를 위해 1비트 확장함!!! 진짜 주의해야 함.
 reg is_zero_a_ff; //in_data_a_ff가 0이면 1을 저장함. 바로 인버터를 지나서 bram_en_a로 연결됨.
+reg [INPUT_WIDTH-1:0] in_data_a_d1_ff; //나중에 필요한 값이므로 지연시킴.
+reg in_valid_a_d1_ff; //나중에 필요한 값이므로 지연시킴.
 
-//stage3, 4는 BRAM 지연임.
+wire [SHIFT_W-1:0] Leading_Zero_Count_a_comb = SHIFT_W'(INPUT_WIDTH - 1) - pri_encoder_index_a_ff; //
+wire [INPUT_WIDTH-1:0] normalized_a_comb = in_data_a_ff << Leading_Zero_Count_a_comb; //MSB가 1이 되도록 왼쪽으로 쉬프트. Barrel Shifter;
+wire signed [SHIFT_W:0] exponent_f_norm_a_comb = $signed({1'b0, pri_encoder_index_a_ff}) - $signed({1'b0, SHIFT_W'(11)}); //부호를 위해 1비트 확장함!!!!
+//A * 2^P (A는 1.xxxx)로 값을 정규화할때 P를 구하기 위한 신호.(고정소수점 고려안하고 그냥 정수로 본 상태기준임. 이후 고정소수점 까지 고려해야 함.)
+wire signed [SHIFT_W:0] final_exponent_a_comb = $signed(exponent_f_norm_a_comb) - $signed({1'b0, SHIFT_W'(IN_FRAC_BITS)}); //고정소수점 까지 고려해서 A * 2^P로 정규화 했을때의 P값.
 
-//stage 5
-reg [17:0] rdata_a_ff; //BRAM에서 읽어온 18비트 역수값을 저장하는 레지스터. 뉴턴랩스 하려면 필요함.
+//stage 3, BRAM 지연임.
+reg [INPUT_WIDTH-1:0] in_data_a_d2_ff;
+reg in_valid_a_d2_ff;
+reg signed [SHIFT_W:0] rshift_a_d1_ff; //여기는 stage 2값이므로 첫번째 지연임.
+reg is_zero_a_d1_ff;  //여기는 stage 2값이므로 첫번째 지연임.
+
+
+//stage 4, BRAM 지연임.
+reg [INPUT_WIDTH-1:0] in_data_a_d3_ff;
+reg in_valid_a_d3_ff;
+reg signed [SHIFT_W:0] rshift_a_d2_ff; 
+reg is_zero_a_d2_ff;
+
+//stage 5. BRAM의 출력 레지스터에서 나온값 저장.
+reg [17:0] rdata_a_ff; //BRAM에서 읽어온 18비트 역수값(18비트 고정소수점. 0.5 ~ 1사이의 값임.) 저장하는 레지스터. 뉴턴랩스 하려면 필요함.
+reg [INPUT_WIDTH-1:0] in_data_a_d4_ff;
+reg in_valid_a_d4_ff;
+reg signed [SHIFT_W:0] rshift_a_d3_ff; 
+reg is_zero_a_d3_ff;
+
 
 //stage 6부터는 generate 문 안에서 진행됨!
 
-always @(*) begin
-    
-end
 
 integer i;
 generate
     if(NEWTON_RAPHSON_PORT_A == 0) begin : nr_0 //port a가 newton-raphson을 사용하지 않을때. DSP 0개 사용
-        //조합회로 신호들
-        
+        //stage 6. 여기서 out_data_a, out_valid_a 를 출력함!!!
 
-        always @(*) begin
-
-        end
+        wire is_negative_a_comb = rshift_a_d3_ff[SHIFT_W]; // MSB (부호 비트). 부호에 따라서 오른쪽 쉬프트인지 왼쪽 쉬프트인지 결정함. 
+        wire [SHIFT_W-1:0] abs_shift_a_comb = is_negative_a_comb ? (-rshift_a_d3_ff[SHIFT_W-1:0]) : rshift_a_d3_ff[SHIFT_W-1:0];
+        wire [OUTPUT_WIDTH-1:0] ext_rdata_a_comb = OUTPUT_WIDTH'(rdata_a_ff); //18비트 rdata_a_ff를 [OUTPUT_WIDTH-1:0] 범위로 확장.
+        wire [OUTPUT_WIDTH-1:0] shifted_val_a_comb = is_negative_a_comb ? (ext_rdata_a_comb << abs_shift_a_comb) : (ext_rdata_a_comb >> abs_shift_a_comb);
 
         always @(posedge clk) begin
             if(reset) begin
@@ -134,15 +155,60 @@ generate
                 sam_ad_a_ff <= 0;
                 rshift_a_ff <= 0;
                 is_zero_a_ff <= 0;
+                in_data_a_d1_ff <= 0;
+                in_valid_a_d1_ff <= 0;
+
+                in_data_a_d2_ff <= 0;
+                in_valid_a_d2_ff <= 0;
+                rshift_a_d1_ff <= 0;
+                is_zero_a_d1_ff <= 0;
+
+                in_data_a_d3_ff <= 0;
+                in_valid_a_d3_ff <= 0;
+                rshift_a_d2_ff <= 0;
+                is_zero_a_d2_ff <= 0;
 
                 rdata_a_ff <= 0;
+                in_data_a_d4_ff <= 0;
+                in_valid_a_d4_ff <= 0;
+                rshift_a_d3_ff <= 0;
+                is_zero_a_d3_ff <= 0;
             end
             else begin
                 //stage 1
                 in_data_a_ff <= in_data_a;
                 in_valid_a_ff <= in_valid_a;
+                pri_encoder_index_a_ff <= pri_en_out_a_comb; //priority encoder에서 나온 출력을 바로 저장함. 
 
                 //stage 2
+                sam_ad_a_ff[10:0] <= normalized_a_comb[INPUT_WIDTH-2:INPUT_WIDTH-12]; //11비트 추출해서 저장. 이때 MSB는 정수부 1이고 이후의 11비트 소수부를 사용함.
+                is_zero_a_ff <= (in_data_a_ff == 0);
+                rshift_a_ff <= final_exponent_a_comb;
+                in_data_a_d1_ff <= in_data_a_ff;
+                in_valid_a_d1_ff <= in_valid_a_ff;
+
+                //stage 3. BRAM 지연
+                in_data_a_d2_ff <= in_data_a_d1_ff;
+                in_valid_a_d2_ff <= in_valid_a_d1_ff;
+                rshift_a_d1_ff <= rshift_a_ff;
+                is_zero_a_d1_ff <= is_zero_a_ff;
+
+                //stage 4. BRAM 지연
+                in_data_a_d3_ff <= in_data_a_d2_ff;
+                in_valid_a_d3_ff <= in_valid_a_d2_ff;
+                rshift_a_d2_ff <= rshift_a_d1_ff;
+                is_zero_a_d2_ff <= is_zero_a_d1_ff;
+
+                //stage 5.
+                rdata_a_ff <= bram_r_data_a; //bram에서 읽은 18비트 0.5 ~ 1 사이의 고정소수점 값 저장.
+                in_data_a_d4_ff <= in_data_a_d3_ff;
+                in_valid_a_d4_ff <= in_valid_a_d3_ff;
+                rshift_a_d3_ff <= rshift_a_d2_ff;
+                is_zero_a_d3_ff <= is_zero_a_d2_ff;
+
+                //stage 6. output으로 출력!!!
+                out_data_a <= shifted_val_a_comb;
+                out_valid_a <= (is_zero_a_d3_ff) ? 1'b0 : in_valid_a_d4_ff;
 
             end
         end
