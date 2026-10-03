@@ -5,13 +5,13 @@ module reciprocal_maker #( //입력 데이터의 역수를 BRAM으로 구성된 
     parameter IN_FRAC_BITS      = 16, // 입력 소수부 비트 수 (IN_INTEGER_BITS + IN_FRAC_BITS == INPUT_WIDTH)
 
     // 2. 출력 포맷 파라미터 (Unsigned)
-    parameter OUTPUT_WIDTH      = 18, // 출력 역수 비트 수
+    parameter OUTPUT_WIDTH      = 25, // 출력 역수 비트 수. 무조건 18 이상이어야 함!!!
     parameter OUT_INTEGER_BITS  = 0,  // 출력 정수부 비트 수 (보통 0~1)
-    parameter OUT_FRAC_BITS     = 18, // 출력 소수부 비트 수 (OUT_INTEGER_BITS + OUT_FRAC_BITS == OUTPUT_WIDTH)
+    parameter OUT_FRAC_BITS     = 25, // 출력 소수부 비트 수 (OUT_INTEGER_BITS + OUT_FRAC_BITS == OUTPUT_WIDTH)
 
     // 3. 연산 파라미터
-    parameter NEWTON_RAPHSON_PORT_A = 1,   // PORT A의 NR 반복 횟수: 0 (11bit 정밀도), 1 (22bit 정밀도), 2 (44bit 정밀도)
-    parameter NEWTON_RAPHSON_PORT_B = 1,
+    parameter NEWTON_RAPHSON_PORT_A = 0,   // PORT A의 NR 반복 횟수: 0 (11bit 정밀도), 1 (22bit 정밀도), 2 (44bit 정밀도)
+    parameter NEWTON_RAPHSON_PORT_B = 0,
 
     localparam SHIFT_W = $clog2(INPUT_WIDTH) //쉬프트할 비트수를 저장하기 위해 필요함. 
 )( //합성시 내부의 BRAM을 해당하는 18비트 역수가 들어있게 초기화 해두어야 함!
@@ -59,7 +59,7 @@ generic_bram #(
     .WRITE_MODE("NO_CHANGE"),             // 저전력 / 고속 권장 모드
     .REG_OUT_A(1), // 출력 레지스터 활성화 (Latency: 2 클럭)
     .REG_OUT_B(1), // 출력 레지스터 활성화 (Latency: 2 클럭)
-    .INIT_FILE("reciprocal_bram_18x2048.hex") // 2048 엔트리 초기화 파일
+    .INIT_FILE("reciprocal_18x2048.hex") // 2048 엔트리 초기화 파일
 ) u_reciprocal_lut (
         // Port A 
     .clk_a       (clk),
@@ -108,9 +108,11 @@ reg in_valid_a_d1_ff; //나중에 필요한 값이므로 지연시킴.
 
 wire [SHIFT_W-1:0] Leading_Zero_Count_a_comb = SHIFT_W'(INPUT_WIDTH - 1) - pri_encoder_index_a_ff; //
 wire [INPUT_WIDTH-1:0] normalized_a_comb = in_data_a_ff << Leading_Zero_Count_a_comb; //MSB가 1이 되도록 왼쪽으로 쉬프트. Barrel Shifter;
-wire signed [SHIFT_W:0] exponent_f_norm_a_comb = $signed({1'b0, pri_encoder_index_a_ff}) - $signed({1'b0, SHIFT_W'(11)}); //부호를 위해 1비트 확장함!!!!
+//wire signed [SHIFT_W:0] exponent_f_norm_a_comb = $signed({1'b0, pri_encoder_index_a_ff}) - $signed({1'b0, SHIFT_W'(11)}); //부호를 위해 1비트 확장함!!!!
 //A * 2^P (A는 1.xxxx)로 값을 정규화할때 P를 구하기 위한 신호.(고정소수점 고려안하고 그냥 정수로 본 상태기준임. 이후 고정소수점 까지 고려해야 함.)
-wire signed [SHIFT_W:0] final_exponent_a_comb = $signed(exponent_f_norm_a_comb) - $signed({1'b0, SHIFT_W'(IN_FRAC_BITS)}); //고정소수점 까지 고려해서 A * 2^P로 정규화 했을때의 P값.
+//wire signed [SHIFT_W:0] final_exponent_a_comb = $signed(exponent_f_norm_a_comb) - $signed({1'b0, SHIFT_W'(IN_FRAC_BITS)}); //고정소수점 까지 고려해서 A * 2^P로 정규화 했을때의 P값.
+wire signed [SHIFT_W:0] final_exponent_a_comb = $signed({1'b0, pri_encoder_index_a_ff}) - $signed({1'b0, SHIFT_W'(IN_FRAC_BITS)});
+//애초에 A는 1.xxx로 정수로 보면 안되고 1비트 정수, 11비트 고정소수점인 값으로 봐야 하는거라서, -11을 해줄 필요가 없음. 어차피 다시 11을 더해서 A를 1.xxx로 정규화 해줘야 함.
 
 //stage 3, BRAM 지연임.
 reg [INPUT_WIDTH-1:0] in_data_a_d2_ff;
@@ -141,9 +143,12 @@ generate
     if(NEWTON_RAPHSON_PORT_A == 0) begin : nr_0 //port a가 newton-raphson을 사용하지 않을때. DSP 0개 사용
         //stage 6. 여기서 out_data_a, out_valid_a 를 출력함!!!
 
-        wire is_negative_a_comb = rshift_a_d3_ff[SHIFT_W]; // MSB (부호 비트). 부호에 따라서 오른쪽 쉬프트인지 왼쪽 쉬프트인지 결정함. 
-        wire [SHIFT_W-1:0] abs_shift_a_comb = is_negative_a_comb ? (-rshift_a_d3_ff[SHIFT_W-1:0]) : rshift_a_d3_ff[SHIFT_W-1:0];
-        wire [OUTPUT_WIDTH-1:0] ext_rdata_a_comb = OUTPUT_WIDTH'(rdata_a_ff); //18비트 rdata_a_ff를 [OUTPUT_WIDTH-1:0] 범위로 확장.
+        localparam signed FORMAT_OFFSET_A = 18 - OUT_FRAC_BITS; //출력을 OUTPUT의 비트크기에 맞춰서 내기위해서 필요한 상수. 출력의 소수점이 16비트면 오른쪽으로 2비트 밀어서 비트 2개를 날려줘야 16비트에 맞춰짐.
+        wire signed [SHIFT_W+1:0] total_shift_a_comb = rshift_a_d3_ff + FORMAT_OFFSET_A; //FOTMAT_OFFSET_A를 더해서 최종 쉬프트 비트수를 구함. FORMAT_OFFSET_A를 더했으므로 1비트 확장함.
+        wire is_negative_a_comb = total_shift_a_comb[SHIFT_W+1]; // MSB (부호 비트). 부호에 따라서 오른쪽 쉬프트인지 왼쪽 쉬프트인지 결정함. 
+        wire [SHIFT_W+1:0] neg_total_shift_a_comb = -total_shift_a_comb;
+        wire [SHIFT_W-1:0] abs_shift_a_comb = is_negative_a_comb ? (neg_total_shift_a_comb[SHIFT_W-1:0]) : total_shift_a_comb[SHIFT_W-1:0]; //rshift
+        wire [OUTPUT_WIDTH-1:0] ext_rdata_a_comb = { {(OUTPUT_WIDTH-18){1'b0}}, rdata_a_ff }; //18비트 rdata_a_ff를 [OUTPUT_WIDTH-1:0] 범위로 확장.
         wire [OUTPUT_WIDTH-1:0] shifted_val_a_comb = is_negative_a_comb ? (ext_rdata_a_comb << abs_shift_a_comb) : (ext_rdata_a_comb >> abs_shift_a_comb);
 
         always @(posedge clk) begin
@@ -173,6 +178,10 @@ generate
                 in_valid_a_d4_ff <= 0;
                 rshift_a_d3_ff <= 0;
                 is_zero_a_d3_ff <= 0;
+
+                out_data_a <= 0;
+                out_valid_a <= 0;
+                div_by_zero_a <= 0;
             end
             else begin
                 //stage 1
@@ -208,7 +217,8 @@ generate
 
                 //stage 6. output으로 출력!!!
                 out_data_a <= shifted_val_a_comb;
-                out_valid_a <= (is_zero_a_d3_ff) ? 1'b0 : in_valid_a_d4_ff;
+                out_valid_a <= in_valid_a_d4_ff;
+                div_by_zero_a <= is_zero_a_d3_ff;
 
             end
         end
@@ -221,11 +231,11 @@ generate
 endgenerate
 
 generate
-    if(NEWTON_RAPHSON_PORT_B == 0) begin : nr_0 //port b가 newton-raphson을 사용하지 않을때. DSP 0개 사용
+    if(NEWTON_RAPHSON_PORT_B == 0) begin : nr_3 //port b가 newton-raphson을 사용하지 않을때. DSP 0개 사용
     end
-    else if(NEWTON_RAPHSON_PORT_B == 1) begin : nr_1 //port b가 newton-raphson을 1번 사용할때. DSP 2개 사용
+    else if(NEWTON_RAPHSON_PORT_B == 1) begin : nr_4 //port b가 newton-raphson을 1번 사용할때. DSP 2개 사용
     end
-    else if(NEWTON_RAPHSON_PORT_B == 2) begin : nr_2 //port b가 newton-raphson을 2번 사용할때. DSP 4개 사용
+    else if(NEWTON_RAPHSON_PORT_B == 2) begin : nr_5 //port b가 newton-raphson을 2번 사용할때. DSP 4개 사용
     end
 endgenerate
 
