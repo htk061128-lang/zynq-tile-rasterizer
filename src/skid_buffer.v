@@ -4,12 +4,12 @@
     input  wire                  clk,
     input  wire                  reset, //동기식 active high reset
 
-    // Upstream (Slave) Interface
+    // Upstream (Slave) Interface. 데이터 전송자에 연결
     input  wire                  s_valid,
     output wire                  s_ready,
     input  wire [DATA_WIDTH-1:0] s_data,
 
-    // Downstream (Master) Interface
+    // Downstream (Master) Interface. 
     output reg                   m_valid,
     input  wire                  m_ready,
     output reg  [DATA_WIDTH-1:0] m_data
