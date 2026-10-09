@@ -1,5 +1,3 @@
-`timescale 1ns / 1ps
-
 // ============================================================================
 // Module: dsp48_mac
 // Description:
@@ -9,7 +7,7 @@
 //   - Input C: 48-bit signed (평행이동 성분, 초기 바이어스 등)
 //   - Output P: 48-bit signed (P = A * B + (clr_accum ? (load_c ? C : 0) : P))
 //
-// Pipeline Latency: 3 Cycles (AREG/BREG -> MREG -> PREG)
+// Pipeline level: 3 (AREG/BREG -> MREG -> PREG) 파이프라인 레지스터는 3단계임.
 // ============================================================================
 
 //FPGA의 DSP로 합성되야 하는 모듈임. 이거 3개 있으면 3 x 3 행렬곱셈기가 완성됨. 
