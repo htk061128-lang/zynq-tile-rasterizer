@@ -13,6 +13,16 @@ import random
 
 golden_queue = Queue()
 
+INPUT_FRAC = 16 #역수 변환전 값의 소수점 비트수. 예: UQ16.16
+RECIPROCAL_FRAC = 25 #역수 변환후 값의 소수점 비트수. 예: UQ0.18
+NUMERATOR_BEFORE_FRAC = 16 #피제수(나눠지는 수)의 원래 소수점 비트수. 예: SQ15.16
+NUMERATOR_AFTER_FRAC = 10 #피제수(나눠지는 수)의 18비트나 25비트로 압축된 후 소수점 비트수 예: SQ9.8, SQ9.15등
+OUTPUT_FRAC = 35 #나눗셈이 완료된 후 DSP결과값의 소수점 비트수. RECIPROCAL_FRAC + NUMERATOR_AFTER_FRAC
+
+Z_MAX = 128 #(1 < Z < 128) : 128, (1 < Z < 256) : 256, (1 < Z < 512) : 512 등등 
+X_MAX = 128 #(-128 < X < 128) : 128, (-256 < X < 256) : 256 등등, 
+
+
 async def reset(dut):
     await RisingEdge(dut.clk)
     dut.reset.value = 1
@@ -22,16 +32,74 @@ async def reset(dut):
 
 def golden_model(indata, outdata):
     if indata == 0: return 444
-    real_indata = indata / (2**16) #소수점이 16비트인 고정소수점값을 소수점 변환.
-    real_outdata = outdata / (2**25) #output의 소수점 비트수만큼으로 나눠야 함!!!! 
+    real_indata = indata / (2**INPUT_FRAC) #input의 소수점 비트수만큼으로 나눠야 함!!!
+    real_outdata = outdata / (2**RECIPROCAL_FRAC) #output의 소수점 비트수만큼으로 나눠야 함!!!! 
     a = 1 / real_indata
     b = abs(((a - real_outdata) / a)) * 100 #절댓값이라서 양수로 나옴.
     return b, real_outdata, a #는 참값과의 오차율을 나타냄. %단위임.
 
-async def random_generate_32(dut): #32비트 16비트 고정소수점 랜덤값 생성.
-    a = random.randint(1, 2**32 - 1) #32비트 정수를 랜덤으로 뽑음.
-    #a = random.randint(1, (2**8) * (2**16)) #Z로 나눌때 Z값의 최대가 256일때 어떻게 되는지 확인용.
+def division_model(ideal_reciprocal, real_reciprocal): #real_reciprocal 값은 고정소수점 변환 전 정수값 받음. ideal_reciprocal은 변환 완료된 값 받음. 주의!!
+    # 1. 원본 분자 생성 (SQ15.16 범위)
+    numerator = random.randint((-X_MAX * (1 << NUMERATOR_BEFORE_FRAC)), 
+                               ( X_MAX * (1 << NUMERATOR_BEFORE_FRAC)))
+    
+    # 2. 실수 기반 이상적 참값
+    ideal_num = numerator / (1 << NUMERATOR_BEFORE_FRAC)
+    ideal = ideal_reciprocal * ideal_num
+    
+    # 3. Verilog의 비트 슬라이싱 모사 (예: SQ15.16 -> 18비트/25비트로 절삭)
+    #    하드웨어: assign after_num = numerator[BEFORE_WIDTH-1 : SHIFT];
+    shift_in = NUMERATOR_BEFORE_FRAC - NUMERATOR_AFTER_FRAC
+    
+    # Verilog 비트 슬라이싱과 동일하게 하위 비트 버림 처리
+    if numerator >= 0:
+        after_num = numerator >> shift_in
+    else:
+        # 음수 절삭 (0을 향한 버림: Verilog의 Truncation과 동기화)
+        after_num = -((-numerator) >> shift_in)
+    
+    # 4. DSP48E1 연산 모사 (Signed * Unsigned -> Signed 확장)
+    dsp_mult_raw = int(real_reciprocal) * int(after_num)
+    
+    # 5. 최종 Q-포맷(OUTPUT_FRAC)에 맞춘 우측 산술 시프트
+    shift_out = RECIPROCAL_FRAC + NUMERATOR_AFTER_FRAC - OUTPUT_FRAC
+    
+    if dsp_mult_raw >= 0:
+        dsp_out = dsp_mult_raw >> shift_out
+    else:
+        dsp_out = -((-dsp_mult_raw) >> shift_out)
+        
+    real = dsp_out / (1 << OUTPUT_FRAC)
+    
+    # 6. 오차 판정 (화면 중앙 분모 0 폭발 방지)
+    pixel_diff = abs(ideal - real) * 320 # 실제 화면에서 몇 픽셀 빗나갔는가?
+    #pixel_diff = abs(ideal - real) # 실제 화면에서 몇 픽셀 빗나갔는가?
+    return pixel_diff, real, ideal
+    '''
+    numerator = random.randint((-X_MAX * (2**16)), (X_MAX * (2**16))) # 
+    #numerator = random.randint(1, (2**16) * (2**16)) #SQ15.16 랜덤 피제수값 생성!!
+    ideal = (ideal_reciprocal) * (numerator / (2**NUMERATOR_BEFORE_FRAC))
+    after_num = numerator >> (NUMERATOR_BEFORE_FRAC - NUMERATOR_AFTER_FRAC) ##18비트, 25비트등으로 자르면서 날라간 비트 쉬프트.
+    dsp_out = (real_reciprocal * after_num) >> (RECIPROCAL_FRAC + NUMERATOR_AFTER_FRAC - OUTPUT_FRAC) #소수점 비트수가 DSP 후
+    #RECIPROCAL_FRAC + NUMERATOR_AFTER_FRAC인 상황에서 소수점 비트수가 OUTPUT_FRAC인 정수로 변환하기 위해 쉬프트
+    real = dsp_out / (2**(OUTPUT_FRAC))
+    error_rate = abs(((ideal - real) / ideal)) * 100
+    return error_rate, real, ideal
+    '''
+
+
+async def random_generate(dut): #input값 고정소수점 랜덤값 생성.
+    #a = random.randint(1, 2**32 - 1) #32비트 정수를 랜덤으로 뽑음.
+    a = 0
+    while(a / (2**INPUT_FRAC) < 1):
+        a = random.randint(1, (Z_MAX) * (2**INPUT_FRAC)) 
+        #a = random.randint(1, (2**7) * (2**16)) #Z로 나눌때 Z값의 최대가 128일때 어떻게 되는지 확인용.
+        #a = random.randint(1, (2**8) * (2**16)) #Z로 나눌때 Z값의 최대가 256일때 어떻게 되는지 확인용.
+        #a = random.randint(1, (2**9) * (2**16)) #Z로 나눌때 Z값의 최대가 512일때 어떻게 되는지 확인용.
     #a = random.randint(1, (2**16)) #UQ16.16에서 정수부가 0인 소수부값이 들어갈때
+    #a = random.randint(1, 2**18 - 1) #18비트 정수를 랜덤으로 뽑음.
+    #a = random.randint(2**10, 2**18 - 1) #1/z이 1/256보다는 큰 상황
+    #a = random.randint(2**9, 2**18 - 1) #1/z이 1/512보다는 큰 상황
     await golden_queue.put(a) #큐에 a를 넣음.
 
     await RisingEdge(dut.clk)
@@ -41,6 +109,8 @@ async def random_generate_32(dut): #32비트 16비트 고정소수점 랜덤값 
 async def monitor(dut, count=100000):
     checked_count = 0
     big_error_rate = 0
+    division_diff = 0
+    division_big_diff = 0;
     while checked_count < count:
         await RisingEdge(dut.clk)
         await Timer(1, "ns") # 엣지 직후 안정된 값 관찰
@@ -49,8 +119,11 @@ async def monitor(dut, count=100000):
             in_val = await golden_queue.get() #큐에서 in_data_a값을 빼옴.
             error_rate, real, ideal = golden_model(in_val, int(dut.out_data_a.value))
             cocotb.log.info("checked_count: %d, 오차는 %f%%, 출력값: %f, 이상적인값: %f, 최고오차: %f", checked_count, error_rate, real, ideal, big_error_rate)
+            division_diff, division_real, divison_ideal = division_model(ideal, int(dut.out_data_a.value))
+            cocotb.log.info("checked_count: %d, 나눗셈 픽셀차: %fpixel, 나눗셈 출력: %f, 이상적인 값: %f, 최고 픽셀차: %fpixel", checked_count, division_diff, division_real, divison_ideal, division_big_diff)
             if error_rate > big_error_rate: big_error_rate = error_rate
-            assert big_error_rate < 90#, cocotb.log.error("오차 폭증! in_val (raw): 0x%X, in_val (float): %f, dut_out: 0x%X", in_val, in_val / 65536.0, int(dut.out_data_a.value))
+            if division_diff > division_big_diff: division_big_diff = division_diff
+            assert big_error_rate < 90
             checked_count += 1
         else: 
             cocotb.log.info("checked_count: %d, 현재 out_valid_a는 0", checked_count)
@@ -64,8 +137,8 @@ async def main_test(dut):
     # We are reusing reset() from the previous example.
     await reset(dut)
 
-    for _ in range(100000):
-        await random_generate_32(dut)
+    for _ in range(50000):
+        await random_generate(dut)
 
 '''
 테스트 결과 정리
@@ -101,6 +174,33 @@ async def main_test(dut):
 
 그래서 이 모듈 사용할떄 무조건 1보다 큰 수를 input으로 넣는다거나, 아니면 input으로 무조건 1보다 작은 소수점만 넣게 강제하는 등의 조건이 필요할 듯. Z값 1보다
 작으면 싹다 culling 하고 1보다 큰것만 역수로 변환해서 나눗셈을 한다던지, 이렇게 해야할듯.
+
+--------------------------------------------------------------------------------------------------------------------------------------------------
+* 출력값을 18비트로 설정하고(UQ0.18), 입력값(UQ16.16) Z가 1 < Z < 128으로 설정하고 10만번 돌리니 최대오차는 약 0.05%정도 나옴. 
+* 출력값을 18비트로 설정하고(UQ0.18), 입력값(UQ16.16) Z가 1 < Z < 256으로 설정하고 10만번 돌리니 최대오차는 약 0.10%정도 나옴. 
+* 출력값을 18비트로 설정하고(UQ0.18), 입력값(UQ16.16) Z가 1 < Z < 512으로 설정하고 10만번 돌리니 최대오차는 약 0.19%정도 나옴.
+* 출력값을 25비트로 설정하고(UQ0.25), 입력값(UQ16.16) Z가 1 < Z < 256으로 설정하고 10만번 돌리니 최대오차는 약 0.05%정도 나옴. 
+* 출력값을 25비트로 설정하고(UQ0.25), 입력값(UQ16.16) Z가 1 < Z < 512으로 설정하고 10만번 돌리니 최대오차는 약 0.05%정도 나옴. 
+
+즉 X/Z, Y/Z 계산할때 결국에 18bit x 25bit인 DSP에 맞춰야 함. 
+* 1/Z에 18비트를 할당하고 X,Y에 25비트를 할당한다면 Z의 최대값을 128이나 256으로 설정해야 1/Z 오차가 0.1% 이하임.
+* 1/Z에 25비트를 할당하고 X,Y에 18비트를 할당한다면 Z의 최대값을 256이나 512등으로 설정해도 1/Z 오차가 0.05% 이하임.
+
+<Z: 25비트, X: 18비트> 최종 X/Z는 SQ2.14로 저장됨. 이후 (X/Z * 320) + 320 해서 SQ11.4로 변환됨
+* 1 < Z < 128이고 -1 < X/Z < 1, 즉 -128 < X < 128 일때: X는 SQ7.10, 5만번 돌렸을때 X/Z 최대오차: 
+* 1 < Z < 128이고 -2 < X/Z < 2, 즉 -256 < X < 256 일때: X는 SQ8.9, 5만번 돌렸을때 X/Z 최대오차:  
+* 1 < Z < 256이고 -1 < X/Z < 1, 즉 -256 < X < 256 일때: X는 SQ8.9, 5만번 돌렸을때 X/Z 최대오차:  
+* 1 < Z < 256이고 -2 < X/Z < 2, 즉 -512 < X < 512 일때: X는 SQ9.8, 5만번 돌렸을때 X/Z 최대오차:  
+* 1 < Z < 512이고 -1 < X/Z < 1, 즉 -512 < X < 512 일때: X는 SQ9.8, 5만번 돌렸을때 X/Z 최대오차:  
+* 1 < Z < 512이고 -2 < X/Z < 2, 즉 -1024 < X < 1024 일때: X는 SQ10.7, 5만번 돌렸을때 X/Z 최대오차:  
+
+<Z: 18비트, X: 25비트> 최종 X/Z는 SQ2.14로 저장됨. 이후 (X/Z * 320) + 320 해서 SQ11.4로 변환됨
+* 1 < Z < 128이고 -1 < X/Z < 1, 즉 -128 < X < 128 일때: X는 SQ7.17, 5만번 돌렸을때 X/Z 최대오차:  
+* 1 < Z < 128이고 -2 < X/Z < 2, 즉 -256 < X < 256 일때: X는 SQ8.16, 5만번 돌렸을때 X/Z 최대오차:  
+* 1 < Z < 256이고 -1 < X/Z < 1, 즉 -256 < X < 256 일때: X는 SQ8.16, 5만번 돌렸을때 X/Z 최대오차:  
+* 1 < Z < 256이고 -2 < X/Z < 2, 즉 -512 < X < 512 일때: X는 SQ9.15, 5만번 돌렸을때 X/Z 최대오차:  
+* 1 < Z < 512이고 -1 < X/Z < 1, 즉 -512 < X < 512 일때: X는 SQ9.15, 5만번 돌렸을때 X/Z 최대오차:  
+* 1 < Z < 512이고 -2 < X/Z < 2, 즉 -1024 < X < 1024 일때: X는 SQ10.14, 5만번 돌렸을때 X/Z 최대오차:  
 
 '''
 
