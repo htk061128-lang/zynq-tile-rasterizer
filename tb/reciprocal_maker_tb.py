@@ -1,3 +1,40 @@
+'''
+--------------------------------------------------------------------------------------------------------------------------------------------------
+* 출력값을 18비트로 설정하고(UQ0.18), 입력값(UQ16.16) Z가 1 < Z < 128으로 설정하고 10만번 돌리니 최대오차는 약 0.05%정도 나옴. 
+* 출력값을 18비트로 설정하고(UQ0.18), 입력값(UQ16.16) Z가 1 < Z < 256으로 설정하고 10만번 돌리니 최대오차는 약 0.10%정도 나옴. 
+* 출력값을 18비트로 설정하고(UQ0.18), 입력값(UQ16.16) Z가 1 < Z < 512으로 설정하고 10만번 돌리니 최대오차는 약 0.19%정도 나옴.
+* 출력값을 25비트로 설정하고(UQ0.25), 입력값(UQ16.16) Z가 1 < Z < 256으로 설정하고 10만번 돌리니 최대오차는 약 0.05%정도 나옴. 
+* 출력값을 25비트로 설정하고(UQ0.25), 입력값(UQ16.16) Z가 1 < Z < 512으로 설정하고 10만번 돌리니 최대오차는 약 0.05%정도 나옴. 
+
+즉 X/Z, Y/Z 계산할때 결국에 18bit x 25bit인 DSP에 맞춰야 함. 
+* 1/Z에 18비트를 할당하고 X,Y에 25비트를 할당한다면 Z의 최대값을 128이나 256으로 설정해야 1/Z 오차가 0.1% 이하임.
+* 1/Z에 25비트를 할당하고 X,Y에 18비트를 할당한다면 Z의 최대값을 256이나 512등으로 설정해도 1/Z 오차가 0.05% 이하임.
+
+<1/Z: 25비트, X: 18비트> 픽셀차 = (X/Z의 절대오차) * 320, DSP의 곱셈 출력비트를 자르지 않았다고 가정.
+* 1 < Z < 128이고 -1 < X/Z < 1, 즉 최대 -128 < X < 128 이므로 X는 SQ7.10, 5만번 돌렸을때 X/Z 최대 픽셀차: 0.268489 pixel
+* 1 < Z < 128이고 -2 < X/Z < 2, 즉 최대 -256 < X < 256 이므로 X는 SQ8.9, 5만번 돌렸을때 X/Z 최대 픽셀차: 0.512530 pixel
+* 1 < Z < 256이고 -1 < X/Z < 1, 즉 최대 -256 < X < 256 이므로 X는 SQ8.9, 5만번 돌렸을때 X/Z 최대 픽셀차: 0.536432 pixel
+* 1 < Z < 256이고 -2 < X/Z < 2, 즉 최대 -512 < X < 512 이므로 X는 SQ9.8, 5만번 돌렸을때 X/Z 최대 픽셀차: 1.113540 pixel
+* 1 < Z < 512이고 -1 < X/Z < 1, 즉 최대 -512 < X < 512 이므로 X는 SQ9.8, 5만번 돌렸을때 X/Z 최대 픽셀차: 1.025019 pixel
+* 1 < Z < 512이고 -2 < X/Z < 2, 즉 최대 -1024 < X < 1024 이므로 X는 SQ10.7, 5만번 돌렸을때 X/Z 최대 픽셀차: 2.167525 pixel
+
+<1/Z: 18비트, X: 25비트> 
+* 1 < Z < 128이고 -1 < X/Z < 1, 즉 -128 < X < 128 이므로 X는 SQ7.17(원래 SQ15.16이므로 의미없음), 5만번 돌렸을때 X/Z 최대 픽셀차: 0.138188 pixel
+* 1 < Z < 128이고 -2 < X/Z < 2, 즉 -256 < X < 256 이므로 X는 SQ8.16, 5만번 돌렸을때 X/Z 최대 픽셀차: 0.276946 pixel
+* 1 < Z < 256이고 -1 < X/Z < 1, 즉 -256 < X < 256 이므로 X는 SQ8.16, 5만번 돌렸을때 X/Z 최대 픽셀차: 0.282143 pixel
+* 1 < Z < 256이고 -2 < X/Z < 2, 즉 -512 < X < 512 이므로 X는 SQ9.15, 5만번 돌렸을때 X/Z 최대 픽셀차: 0.549966 pixel
+* 1 < Z < 512이고 -1 < X/Z < 1, 즉 -512 < X < 512 이므로 X는 SQ9.15, 5만번 돌렸을때 X/Z 최대 픽셀차: 0.566489 pixel
+* 1 < Z < 512이고 -2 < X/Z < 2, 즉 -1024 < X < 1024 이므로 X는 SQ10.14, 5만번 돌렸을때 X/Z 최대 픽셀차: 1.13734 pixel
+
++) 1/Z에 18비트 할당하고, 1 < Z < 256으로 잡고, Guard Band없이(-1 < X/Z < 1) X를 DSP에 넣을때 SQ8.16으로 자르는걸로 결정함.
+
+<2026.10.11> -----------------------------------------------------------------------------------------------------------------------------
+지금까지의 계산은 reciprocal_maker 모듈의 UQ0.18, UQ0.25등으로 이미 변환된 출력을 그대로 DSP의 입력으로 넣었을떄의 오차를 구했음.
+근데 이렇게 하면 BRAM에서 읽어온 18비트 유효비트가 출력포맷을 맞추기 위해 오른쪽으로 쉬프트하면서 잘리게됨. 25비트면 7비트 쉬프트까지는 상관없지만
+그 이상 쉬프트하면 유효 비트가 잘려서 오차가 증폭된 UQ0.25값이 나옴. 그래서 reciprocal_maker 모듈을 수정해서 자르기 전의 18비트 UQ0.18 역수값과 쉬프트값을
+받아서 18비트를 그대로 DSP에 넣은 후 그 최종 결과값에서 쉬프트해서 자릿수를 맞추는게 더 나은 방법임.
+
+'''
 # This file is public domain, it can be freely copied without restrictions.
 # SPDX-License-Identifier: CC0-1.0
 # ruff: noqa: F841
@@ -13,14 +50,14 @@ import random
 
 golden_queue = Queue()
 
-INPUT_FRAC = 16 #역수 변환전 값의 소수점 비트수. 예: UQ16.16
-RECIPROCAL_FRAC = 25 #역수 변환후 값의 소수점 비트수. 예: UQ0.18
-NUMERATOR_BEFORE_FRAC = 16 #피제수(나눠지는 수)의 원래 소수점 비트수. 예: SQ15.16
-NUMERATOR_AFTER_FRAC = 10 #피제수(나눠지는 수)의 18비트나 25비트로 압축된 후 소수점 비트수 예: SQ9.8, SQ9.15등
-OUTPUT_FRAC = 35 #나눗셈이 완료된 후 DSP결과값의 소수점 비트수. RECIPROCAL_FRAC + NUMERATOR_AFTER_FRAC
+INPUT_FRAC = 16 #역수 변환전 값의 소수점 비트수. Z의 원래 소수점 비트수 예: UQ16.16
+RECIPROCAL_FRAC = 18 #역수 변환후 값의 소수점 비트수. 1/Z의 소수점 비트수 예: UQ0.18
+NUMERATOR_BEFORE_FRAC = 16 #피제수(나눠지는 수)의 원래 소수점 비트수. X의 원래 소수점 비트수 예: SQ15.16
+NUMERATOR_AFTER_FRAC = 14 #피제수(나눠지는 수)의 18비트나 25비트로 압축된 후 소수점 비트수. 압축된 X의 소수점 비트수 예: SQ9.8, SQ9.15등
+OUTPUT_FRAC = RECIPROCAL_FRAC + NUMERATOR_AFTER_FRAC #나눗셈이 완료된 후 DSP결과값의 소수점 비트수. RECIPROCAL_FRAC + NUMERATOR_AFTER_FRAC
 
-Z_MAX = 128 #(1 < Z < 128) : 128, (1 < Z < 256) : 256, (1 < Z < 512) : 512 등등 
-X_MAX = 128 #(-128 < X < 128) : 128, (-256 < X < 256) : 256 등등, 
+Z_MAX = 512 #(1 < Z < 128) : 128, (1 < Z < 256) : 256, (1 < Z < 512) : 512 등등 
+GUARD_BAND = 2 #-1 < X/Z < 1이면 1로 설정, -2 < X/Z < 2이면 2로 설정
 
 
 async def reset(dut):
@@ -38,11 +75,7 @@ def golden_model(indata, outdata):
     b = abs(((a - real_outdata) / a)) * 100 #절댓값이라서 양수로 나옴.
     return b, real_outdata, a #는 참값과의 오차율을 나타냄. %단위임.
 
-def division_model(ideal_reciprocal, real_reciprocal): #real_reciprocal 값은 고정소수점 변환 전 정수값 받음. ideal_reciprocal은 변환 완료된 값 받음. 주의!!
-    # 1. 원본 분자 생성 (SQ15.16 범위)
-    numerator = random.randint((-X_MAX * (1 << NUMERATOR_BEFORE_FRAC)), 
-                               ( X_MAX * (1 << NUMERATOR_BEFORE_FRAC)))
-    
+def division_model(ideal_reciprocal, real_reciprocal, numerator): #real_reciprocal 값은 고정소수점 변환 전 정수값 받음. ideal_reciprocal은 변환 완료된 값 받음. 주의!!
     # 2. 실수 기반 이상적 참값
     ideal_num = numerator / (1 << NUMERATOR_BEFORE_FRAC)
     ideal = ideal_reciprocal * ideal_num
@@ -90,9 +123,9 @@ def division_model(ideal_reciprocal, real_reciprocal): #real_reciprocal 값은 �
 
 async def random_generate(dut): #input값 고정소수점 랜덤값 생성.
     #a = random.randint(1, 2**32 - 1) #32비트 정수를 랜덤으로 뽑음.
-    a = 0
-    while(a / (2**INPUT_FRAC) < 1):
-        a = random.randint(1, (Z_MAX) * (2**INPUT_FRAC)) 
+    #a = 0
+    #while(a / (2**INPUT_FRAC) < 1):
+        #a = random.randint(1, (Z_MAX) * (2**INPUT_FRAC)) 
         #a = random.randint(1, (2**7) * (2**16)) #Z로 나눌때 Z값의 최대가 128일때 어떻게 되는지 확인용.
         #a = random.randint(1, (2**8) * (2**16)) #Z로 나눌때 Z값의 최대가 256일때 어떻게 되는지 확인용.
         #a = random.randint(1, (2**9) * (2**16)) #Z로 나눌때 Z값의 최대가 512일때 어떻게 되는지 확인용.
@@ -100,10 +133,20 @@ async def random_generate(dut): #input값 고정소수점 랜덤값 생성.
     #a = random.randint(1, 2**18 - 1) #18비트 정수를 랜덤으로 뽑음.
     #a = random.randint(2**10, 2**18 - 1) #1/z이 1/256보다는 큰 상황
     #a = random.randint(2**9, 2**18 - 1) #1/z이 1/512보다는 큰 상황
-    await golden_queue.put(a) #큐에 a를 넣음.
+
+    # 1. Z 생성: 1 <= Z < Z_MAX (UQ16.16)
+    # Z_min은 1.0 (1 << INPUT_FRAC) 이상
+    z_int_min = 1 << INPUT_FRAC #z_int_min[INPUT_FRAC]를 1로 설정. z_int_min[INPUT_FRAC-1:0] = 0
+    z_int_max = (Z_MAX << INPUT_FRAC) - 1 #이러면 Z_MAX가 128이면 127.999.. 이렇게 설정됨.
+    z_val = random.randint(z_int_min, z_int_max)
+
+    x_limit = int((z_val >> INPUT_FRAC) * (1 << NUMERATOR_BEFORE_FRAC) * GUARD_BAND)
+    x_val = random.randint(-x_limit, x_limit)
+
+    await golden_queue.put((z_val, x_val)) #큐에 z_val, x_val를 넣음.
 
     await RisingEdge(dut.clk)
-    dut.in_data_a.value = a #랜덤 값 넣어줌
+    dut.in_data_a.value = z_val #랜덤 값 넣어줌
     dut.in_valid_a.value = 1
 
 async def monitor(dut, count=100000):
@@ -116,10 +159,12 @@ async def monitor(dut, count=100000):
         await Timer(1, "ns") # 엣지 직후 안정된 값 관찰
 
         if dut.out_valid_a.value == 1:
-            in_val = await golden_queue.get() #큐에서 in_data_a값을 빼옴.
-            error_rate, real, ideal = golden_model(in_val, int(dut.out_data_a.value))
+            z_val, x_val = await golden_queue.get() #큐에서 in_data_a값을 빼옴.
+
+            error_rate, real, ideal = golden_model(z_val, int(dut.out_after_reciprocal_a.value))
             cocotb.log.info("checked_count: %d, 오차는 %f%%, 출력값: %f, 이상적인값: %f, 최고오차: %f", checked_count, error_rate, real, ideal, big_error_rate)
-            division_diff, division_real, divison_ideal = division_model(ideal, int(dut.out_data_a.value))
+            
+            division_diff, division_real, divison_ideal = division_model(ideal, int(dut.out_after_reciprocal_a.value), x_val)
             cocotb.log.info("checked_count: %d, 나눗셈 픽셀차: %fpixel, 나눗셈 출력: %f, 이상적인 값: %f, 최고 픽셀차: %fpixel", checked_count, division_diff, division_real, divison_ideal, division_big_diff)
             if error_rate > big_error_rate: big_error_rate = error_rate
             if division_diff > division_big_diff: division_big_diff = division_diff
@@ -174,33 +219,5 @@ async def main_test(dut):
 
 그래서 이 모듈 사용할떄 무조건 1보다 큰 수를 input으로 넣는다거나, 아니면 input으로 무조건 1보다 작은 소수점만 넣게 강제하는 등의 조건이 필요할 듯. Z값 1보다
 작으면 싹다 culling 하고 1보다 큰것만 역수로 변환해서 나눗셈을 한다던지, 이렇게 해야할듯.
-
---------------------------------------------------------------------------------------------------------------------------------------------------
-* 출력값을 18비트로 설정하고(UQ0.18), 입력값(UQ16.16) Z가 1 < Z < 128으로 설정하고 10만번 돌리니 최대오차는 약 0.05%정도 나옴. 
-* 출력값을 18비트로 설정하고(UQ0.18), 입력값(UQ16.16) Z가 1 < Z < 256으로 설정하고 10만번 돌리니 최대오차는 약 0.10%정도 나옴. 
-* 출력값을 18비트로 설정하고(UQ0.18), 입력값(UQ16.16) Z가 1 < Z < 512으로 설정하고 10만번 돌리니 최대오차는 약 0.19%정도 나옴.
-* 출력값을 25비트로 설정하고(UQ0.25), 입력값(UQ16.16) Z가 1 < Z < 256으로 설정하고 10만번 돌리니 최대오차는 약 0.05%정도 나옴. 
-* 출력값을 25비트로 설정하고(UQ0.25), 입력값(UQ16.16) Z가 1 < Z < 512으로 설정하고 10만번 돌리니 최대오차는 약 0.05%정도 나옴. 
-
-즉 X/Z, Y/Z 계산할때 결국에 18bit x 25bit인 DSP에 맞춰야 함. 
-* 1/Z에 18비트를 할당하고 X,Y에 25비트를 할당한다면 Z의 최대값을 128이나 256으로 설정해야 1/Z 오차가 0.1% 이하임.
-* 1/Z에 25비트를 할당하고 X,Y에 18비트를 할당한다면 Z의 최대값을 256이나 512등으로 설정해도 1/Z 오차가 0.05% 이하임.
-
-<Z: 25비트, X: 18비트> 최종 X/Z는 SQ2.14로 저장됨. 이후 (X/Z * 320) + 320 해서 SQ11.4로 변환됨
-* 1 < Z < 128이고 -1 < X/Z < 1, 즉 -128 < X < 128 일때: X는 SQ7.10, 5만번 돌렸을때 X/Z 최대오차: 
-* 1 < Z < 128이고 -2 < X/Z < 2, 즉 -256 < X < 256 일때: X는 SQ8.9, 5만번 돌렸을때 X/Z 최대오차:  
-* 1 < Z < 256이고 -1 < X/Z < 1, 즉 -256 < X < 256 일때: X는 SQ8.9, 5만번 돌렸을때 X/Z 최대오차:  
-* 1 < Z < 256이고 -2 < X/Z < 2, 즉 -512 < X < 512 일때: X는 SQ9.8, 5만번 돌렸을때 X/Z 최대오차:  
-* 1 < Z < 512이고 -1 < X/Z < 1, 즉 -512 < X < 512 일때: X는 SQ9.8, 5만번 돌렸을때 X/Z 최대오차:  
-* 1 < Z < 512이고 -2 < X/Z < 2, 즉 -1024 < X < 1024 일때: X는 SQ10.7, 5만번 돌렸을때 X/Z 최대오차:  
-
-<Z: 18비트, X: 25비트> 최종 X/Z는 SQ2.14로 저장됨. 이후 (X/Z * 320) + 320 해서 SQ11.4로 변환됨
-* 1 < Z < 128이고 -1 < X/Z < 1, 즉 -128 < X < 128 일때: X는 SQ7.17, 5만번 돌렸을때 X/Z 최대오차:  
-* 1 < Z < 128이고 -2 < X/Z < 2, 즉 -256 < X < 256 일때: X는 SQ8.16, 5만번 돌렸을때 X/Z 최대오차:  
-* 1 < Z < 256이고 -1 < X/Z < 1, 즉 -256 < X < 256 일때: X는 SQ8.16, 5만번 돌렸을때 X/Z 최대오차:  
-* 1 < Z < 256이고 -2 < X/Z < 2, 즉 -512 < X < 512 일때: X는 SQ9.15, 5만번 돌렸을때 X/Z 최대오차:  
-* 1 < Z < 512이고 -1 < X/Z < 1, 즉 -512 < X < 512 일때: X는 SQ9.15, 5만번 돌렸을때 X/Z 최대오차:  
-* 1 < Z < 512이고 -2 < X/Z < 2, 즉 -1024 < X < 1024 일때: X는 SQ10.14, 5만번 돌렸을때 X/Z 최대오차:  
-
 '''
 
