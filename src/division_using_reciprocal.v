@@ -178,7 +178,7 @@ module division_using_reciprocal #( //역수기, DSP 합쳐서 총 10단계의 �
             localparam signed [15:0] BASE_SHIFT_A = $signed(NUM_FRAC_A) + 17 - $signed(OUT_FRAC_A);
             //SQ0.17 * SQ(NUM_WIDTH - 1 - NUM_FRAC_A).(NUM_FRAC_A) 이므로 소수점 비트수는 NUM_FRAC_A + 17
             //이고 여기서 OUT_FRAC_A에 맞추기 위해서는 BASE_SHIFT_A만큼 우측으로 쉬프트 해야 함. 음수라면 좌측으로 쉬프트 해주면 됨. 
-            wire signed [9:0] total_shift_a_comb = BASE_SHIFT_A + st90_adjusted_rshift_a_ff; //이때 곱한 역수값은 SQ0.17값 * 2^(-st90_adjusted_rshift_a_ff)이었음.
+            wire signed [9:0] total_shift_a_comb = BASE_SHIFT_A + st80_adjusted_rshift_a_ff; //이때 곱한 역수값은 SQ0.17값 * 2^(-st90_adjusted_rshift_a_ff)이었음.
     
             wire signed [47:0] shifted_result_a_comb;
     
@@ -226,13 +226,13 @@ module division_using_reciprocal #( //역수기, DSP 합쳐서 총 10단계의 �
                     st80_div_by_zero_a_ff <= st70_div_by_zero_a_ff;
                     st80_adjusted_rshift_a_ff <= st70_adjusted_rshift_a_ff;
                     
-                    st90_adjusted_rshift_a_ff <= adjusted_rshift_a_comb;
+                    st90_adjusted_rshift_a_ff <= st80_adjusted_rshift_a_ff;
                     st90_div_by_zero_a_ff <= st80_div_by_zero_a_ff;
                     st90_mult_result_a_ff <= mult_result_a; //DSP 모듈의 출력인 mul_result_a를 여기에 넣음.
                     st90_valid_a_ff <= mult_valid_a; //DSP 모듈의 출력인 mul_valid_a를 여기에 넣음.
 
                     out_valid_a <= st90_valid_a_ff;
-                    out_quotients_a[NUM_CHANNELS_B*OUT_WIDTH_B-1:0] <= out_quotients_a_comb;
+                    out_quotients_a[NUM_CHANNELS_A*OUT_WIDTH_A-1:0] <= out_quotients_a_comb;
                     div_by_zero_a <= st90_div_by_zero_a_ff;
                 end
             end
