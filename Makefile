@@ -6,16 +6,24 @@ TOPLEVEL_LANG = verilog
 VERILOG_SOURCES += $(PWD)/src/reciprocal_maker.v
 VERILOG_SOURCES += $(PWD)/src/priority_encoder.v
 VERILOG_SOURCES += $(PWD)/src/generic_bram.v
+VERILOG_SOURCES += $(PWD)/src/generic_distributed_ram.v
+VERILOG_SOURCES += $(PWD)/src/division_using_reciprocal.v
+VERILOG_SOURCES += $(PWD)/src/dsp48_mac.v
+VERILOG_SOURCES += $(PWD)/src/matrix_mul_2clk.v
+VERILOG_SOURCES += $(PWD)/src/pipe_delay.v
+VERILOG_SOURCES += $(PWD)/src/skid_buffer.v
+VERILOG_SOURCES += $(PWD)/src/vtx_stream_fifo.v
+
 
 
 # 3. Verilog 최상위 모듈 이름 (module <이름> 에 들어간 이름)
-TOPLEVEL = reciprocal_maker
+TOPLEVEL = division_using_reciprocal 
 
 # 4-1. 파이썬 모듈 검색 경로에 tb 폴더 추가
 export PYTHONPATH := $(PWD)/tb:$(PYTHONPATH)
 
 # 4. 실행할 파이썬 테스트 파일 이름 (.py 제외)
-MODULE = reciprocal_maker_tb
+MODULE = division_using_reciprocal_tb
 
 # Enable waveform generation.
 WAVES = 0

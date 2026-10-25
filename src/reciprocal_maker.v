@@ -75,9 +75,9 @@ wire [10:0] bram_ad_a = sam_ad_a_ff[10:0]; // 11비트 주소 입력
 wire [17:0] bram_r_data_a; // 18비트 역수 데이터 출력 (2 클럭 지연)
 wire bram_en_a = ~is_zero_a_ff; // 파이프라인 유효 신호 연동
 
-wire [10:0] bram_ad_b; // 11비트 주소 입력
+wire [10:0] bram_ad_b = sam_ad_b_ff[10:0]; // 11비트 주소 입력
 wire [17:0] bram_r_data_b; // 18비트 역수 데이터 출력 (2 클럭 지연)
-wire bram_en_b; // 파이프라인 유효 신호 연동
+wire bram_en_b = ~is_zero_b_ff; // 파이프라인 유효 신호 연동
 
 generic_bram #(
     .DATA_DEPTH(2048),                    // 18 * 2028 BRAM 사용.
@@ -110,6 +110,7 @@ generic_bram #(
     .dout_b      (bram_r_data_b)                         
 );
 
+wire [SHIFT_W_A-1:0] pri_en_out_a_comb; 
 priority_encoder #( 
     .INPUT_WIDTH(INPUT_WIDTH_A)
 ) priority_encoder_ins (
@@ -117,7 +118,15 @@ priority_encoder #(
     .out(pri_en_out_a_comb), //비트폭은 $clog2(INPUT_WIDTH_A)임.
     .valid() //in_data_a의 모든 비트가 0이면 valid는 0이 나옴. 어차피 is_zero_a_ff가 있으므로 받을 필요 없음.
 );
-wire [SHIFT_W_A-1:0] pri_en_out_a_comb; 
+
+wire [SHIFT_W_B-1:0] pri_en_out_b_comb;
+priority_encoder #(
+    .INPUT_WIDTH(INPUT_WIDTH_B)
+) priority_encoder_ins_b (
+    .in(in_data_b),
+    .out(pri_en_out_b_comb),
+    .valid()
+);
 
 //우선순위 인코더는 32비트정도는 LUT 2 ~ 3단 이면 끝난다고 함. 배럴 쉬프터도 2 ~ 3단 이러고 함. gemini 피셜.
 
@@ -152,6 +161,31 @@ reg [INPUT_WIDTH_A-1:0] in_data_a_d3_ff;
 reg in_valid_a_d3_ff;
 reg signed [SHIFT_W_A:0] rshift_a_d2_ff; 
 reg is_zero_a_d2_ff;
+
+//PORT B 신호들 ---------------------------
+reg [INPUT_WIDTH_B-1:0] in_data_b_ff;
+reg [SHIFT_W_B-1:0] pri_encoder_index_b_ff;
+reg in_valid_b_ff;
+
+reg [10:0] sam_ad_b_ff;
+reg signed [SHIFT_W_B:0] rshift_b_ff;
+reg is_zero_b_ff;
+reg [INPUT_WIDTH_B-1:0] in_data_b_d1_ff;
+reg in_valid_b_d1_ff;
+
+wire [SHIFT_W_B-1:0] Leading_Zero_Count_b_comb = SHIFT_W_B'(INPUT_WIDTH_B - 1) - pri_encoder_index_b_ff;
+wire [INPUT_WIDTH_B-1:0] normalized_b_comb = in_data_b_ff << Leading_Zero_Count_b_comb;
+wire signed [SHIFT_W_B:0] final_exponent_b_comb = $signed({1'b0, pri_encoder_index_b_ff}) - $signed({1'b0, SHIFT_W_B'(IN_FRAC_BITS_B)});
+
+reg [INPUT_WIDTH_B-1:0] in_data_b_d2_ff;
+reg in_valid_b_d2_ff;
+reg signed [SHIFT_W_B:0] rshift_b_d1_ff;
+reg is_zero_b_d1_ff;
+
+reg [INPUT_WIDTH_B-1:0] in_data_b_d3_ff;
+reg in_valid_b_d3_ff;
+reg signed [SHIFT_W_B:0] rshift_b_d2_ff;
+reg is_zero_b_d2_ff;
 
 //stage 5 부터는 generate문에 의해서 진행됨.
 
@@ -296,6 +330,121 @@ endgenerate
 
 generate
     if(NEWTON_RAPHSON_PORT_B == 0) begin : nr_3 //port b가 newton-raphson을 사용하지 않을때. DSP 0개 사용
+        if(INTERNAL_SHIFT_B == 1) begin : intershift
+            assign out_pre_reciprocal_b = 0;
+            assign out_rshift_b = 0;
+            assign out_after_reciprocal_b = out_after_reciprocal_b_ff;
+
+            reg [17:0] rdata_b_ff;
+            reg [INPUT_WIDTH_B-1:0] in_data_b_d4_ff;
+            reg in_valid_b_d4_ff;
+            reg signed [SHIFT_W_B:0] rshift_b_d3_ff;
+            reg is_zero_b_d3_ff;
+
+            reg [OUTPUT_WIDTH_B-1:0] out_after_reciprocal_b_ff;
+
+            localparam signed FORMAT_OFFSET_B = 18 - OUT_FRAC_BITS_B;
+            wire signed [SHIFT_W_B+1:0] total_shift_b_comb = rshift_b_d3_ff + FORMAT_OFFSET_B;
+            wire is_negative_b_comb = total_shift_b_comb[SHIFT_W_B+1];
+            wire [SHIFT_W_B+1:0] neg_total_shift_b_comb = -total_shift_b_comb;
+            wire [SHIFT_W_B-1:0] abs_shift_b_comb = is_negative_b_comb ? (neg_total_shift_b_comb[SHIFT_W_B-1:0]) : total_shift_b_comb[SHIFT_W_B-1:0];
+            wire [OUTPUT_WIDTH_B-1:0] ext_rdata_b_comb = { {(OUTPUT_WIDTH_B-18){1'b0}}, rdata_b_ff };
+            wire [OUTPUT_WIDTH_B-1:0] shifted_val_b_comb = is_negative_b_comb ? (ext_rdata_b_comb << abs_shift_b_comb) : (ext_rdata_b_comb >> abs_shift_b_comb);
+
+            always @(posedge clk) begin
+                if(reset) begin
+                    rdata_b_ff <= 0;
+                    in_data_b_d4_ff <= 0;
+                    in_valid_b_d4_ff <= 0;
+                    rshift_b_d3_ff <= 0;
+                    is_zero_b_d3_ff <= 0;
+
+                    out_after_reciprocal_b_ff <= 0;
+                    out_valid_b <= 0;
+                    div_by_zero_b <= 0;
+                end
+                else begin
+                    rdata_b_ff <= bram_r_data_b;
+                    in_data_b_d4_ff <= in_data_b_d3_ff;
+                    in_valid_b_d4_ff <= in_valid_b_d3_ff;
+                    rshift_b_d3_ff <= rshift_b_d2_ff;
+                    is_zero_b_d3_ff <= is_zero_b_d2_ff;
+
+                    out_after_reciprocal_b_ff <= shifted_val_b_comb;
+                    out_valid_b <= in_valid_b_d4_ff;
+                    div_by_zero_b <= is_zero_b_d3_ff;
+                end
+            end
+        end
+
+        if(INTERNAL_SHIFT_B == 0) begin : noshift
+            assign out_after_reciprocal_b = 0;
+            assign out_pre_reciprocal_b = out_pre_reciprocal_b_ff;
+            assign out_rshift_b = out_rshift_b_ff;
+
+            reg [17:0] out_pre_reciprocal_b_ff;
+            reg signed [SHIFT_W_B:0] out_rshift_b_ff;
+
+            always @(posedge clk) begin
+                if(reset) begin
+                    out_rshift_b_ff <= 0;
+                    out_pre_reciprocal_b_ff <= 0;
+                    out_valid_b <= 0;
+                    div_by_zero_b <= 0;
+                end
+                else begin
+                    out_pre_reciprocal_b_ff <= bram_r_data_b;
+                    out_rshift_b_ff <= rshift_b_d2_ff;
+                    out_valid_b <= in_valid_b_d3_ff;
+                    div_by_zero_b <= is_zero_b_d2_ff;
+                end
+            end
+        end
+
+        always @(posedge clk) begin
+            if(reset) begin
+                in_data_b_ff <= 0;
+                in_valid_b_ff <= 0;
+                pri_encoder_index_b_ff <= 0;
+
+                sam_ad_b_ff <= 0;
+                rshift_b_ff <= 0;
+                is_zero_b_ff <= 0;
+                in_data_b_d1_ff <= 0;
+                in_valid_b_d1_ff <= 0;
+
+                in_data_b_d2_ff <= 0;
+                in_valid_b_d2_ff <= 0;
+                rshift_b_d1_ff <= 0;
+                is_zero_b_d1_ff <= 0;
+
+                in_data_b_d3_ff <= 0;
+                in_valid_b_d3_ff <= 0;
+                rshift_b_d2_ff <= 0;
+                is_zero_b_d2_ff <= 0;
+            end
+            else begin
+                in_data_b_ff <= in_data_b;
+                in_valid_b_ff <= in_valid_b;
+                pri_encoder_index_b_ff <= pri_en_out_b_comb;
+
+                sam_ad_b_ff[10:0] <= normalized_b_comb[INPUT_WIDTH_B-2:INPUT_WIDTH_B-12];
+                is_zero_b_ff <= (in_data_b_ff == 0);
+                rshift_b_ff <= final_exponent_b_comb;
+                in_data_b_d1_ff <= in_data_b_ff;
+                in_valid_b_d1_ff <= in_valid_b_ff;
+
+                in_data_b_d2_ff <= in_data_b_d1_ff;
+                in_valid_b_d2_ff <= in_valid_b_d1_ff;
+                rshift_b_d1_ff <= rshift_b_ff;
+                is_zero_b_d1_ff <= is_zero_b_ff;
+
+                in_data_b_d3_ff <= in_data_b_d2_ff;
+                in_valid_b_d3_ff <= in_valid_b_d2_ff;
+                rshift_b_d2_ff <= rshift_b_d1_ff;
+                is_zero_b_d2_ff <= is_zero_b_d1_ff;
+            end
+        end
     end
     else if(NEWTON_RAPHSON_PORT_B == 1) begin : nr_4 //port b가 newton-raphson을 1번 사용할때. DSP 2개 사용
     end
