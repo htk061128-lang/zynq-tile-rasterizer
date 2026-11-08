@@ -4,8 +4,8 @@ module generic_bram #(
     parameter integer BYTE_WIDTH  = 8,          // 바이트 분할 단위: 8, 9, 또는 DATA_WIDTH
     parameter         RAM_MODE    = "TRUE_DUAL",// "TRUE_DUAL" or "SIMPLE_DUAL"
     parameter         WRITE_MODE  = "NO_CHANGE",// "NO_CHANGE" (권장/저전력) or "READ_FIRST"
-    parameter integer REG_OUT_A   = 0,          // Port A 출력 레지스터 (0: 1-cycle, 1: 2-cycle latency)
-    parameter integer REG_OUT_B   = 0,          // Port B 출력 레지스터 (0: 1-cycle, 1: 2-cycle latency)
+    parameter integer REG_OUT_A   = 1,          // Port A 출력 레지스터 (0: 1-cycle, 1: 2-cycle latency)
+    parameter integer REG_OUT_B   = 1,          // Port B 출력 레지스터 (0: 1-cycle, 1: 2-cycle latency)
     parameter         INIT_FILE   = "",         // 초기화 헥스 파일 ($readmemh)
 
     // 파생 파라미터 자동 계산
