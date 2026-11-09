@@ -1,5 +1,5 @@
 module vtx_stream_fifo#( 
-    parameter DEPTH = 64 //x, y, z의 비트수 합이 48이기 떄문에 49(last 1비트 추가) x DEPTH Distribute Ram을 선언하게 됨.
+    parameter DEPTH = 32 //x, y, z의 비트수 합이 48이기 떄문에 49(last 1비트 추가) x DEPTH Distribute Ram을 선언하게 됨.
 )(
     input clk,
     input reset,
